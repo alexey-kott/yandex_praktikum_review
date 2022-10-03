@@ -1,0 +1,110 @@
+import shutil
+from urllib.request import urlopen
+from pathlib import Path
+import ssl
+import json
+from logger import logger  # нет модуля logger
+# поменяй порядок импортов в соответствии с pep8
+
+# Нижеописанные вспомогательные функции лучше вынести в отдельный файл, например, utils.py
+# Текущий файл называется job.py и здесь ожидается увидеть только код, который относится к реализации этой сущности
+
+
+def coroutine(f):  # декоратор coroutine уже определён в файле scheduler. Стоит оставить его реализацию
+                   # только в одном месте
+    def wrap(*args, **kwargs):
+        gen = f(*args, **kwargs)
+        gen.send(None)
+        return gen
+    return wrap
+
+
+def get_and_write_data(condition, url):  # type hints
+    # функция должна отвечать принципу единственной ответственности: лучше разделить эту функцию на две отдельных:
+    # одна — get_data() — будет получать данные, другая — write_data() — сохранять их
+    context = ssl._create_unverified_context()  # для обращения к приватным методам каких-либо сторонных объектов
+                                                # должны быть очень весомые причины. Подумай, действительно ли это тот
+                                                # случай и нельзя ли сделать здесь как-то иначе?
+    file = 'punchline.txt'  # Такие значения лучше выносить в константу в начало файла и использовать их далее по коду.
+                            # К тому же, назвние переменной не очень точно отражает её сущность. В данном случае это не
+                            # file, а, скорее, file_name
+    with condition:
+        with urlopen(url, context=context) as req:  # скорее всего здесь тебе гораздо комфортнее было бы использовать,
+                                                    # например, пакет requests. Он позволяет очень удобно работать с
+                                                    # получением и передачей запросов по сети.
+            resp = req.read().decode("utf-8")
+            resp = json.loads(resp)
+        if req.status != 200:  # Для статус-кодов лучше воспользоваться классом HTTPStatus из модуля http
+            # К тому же, успешный ответ не обязательно будет иметь код 200.
+            raise Exception(  # класс Exception — слишком общий для того, чтобы выбрасывать с помощью него ошибки.
+                # Лучше определить свой класс, например, RequestError(Exception), либо импортнуть уже готовый из того
+                # же модуля requests. Позже это будет полезно тебе при чтении логов, например.
+                "Error during execute request. {}: {}".format(
+                    resp.status, resp.reason
+                )
+            )
+        data = resp
+        if isinstance(data, dict):  # В этой проверке нет необходимости: если десериализация прошла успешно, то здесь
+                                    # ты в любом случае будешь иметь словарь
+            path = Path(file)
+            setup = data['setup']
+            punchline = data['punchline']
+            print(
+                f'Setup: {setup} \n'
+                f'Punchline: {punchline}'
+            )
+            with open(path, mode='a') as config:  # почему config? Не очень подходящее название для того, какие
+                                                  # данные ты записываешь.
+                config.write(str(data))  # Если ты в дальнейшем хочешь как-то парсить сохранённые данные, то, вероятно,
+                                         # тебе стоит писать в конце символ \n
+        else:
+            logger.error(type(data))  # логирование ошибок должно происходить в месте, где происходит обработка ответа
+                                      # сервиса, т.е. примерно после блока с 'if req.status != 200'
+            logger.error(ValueError)
+            raise ValueError
+
+
+def copy_file(condition, x=None):  # непонятна роль параметра x
+    file = 'punchline.txt'
+    to_path = './jokes/'  # Адрес папки для записи файлов так же стоит вынести в константы и можно сразу обернуть в Path()
+    with condition:
+        condition.wait(timeout=1)
+        try:
+            shutil.copy(file, to_path)
+        except FileNotFoundError as ex:  # обработку исключения лучше вынести туда, где ты вызываешь
+                                         # функции работы с файлами
+            logger.error('Файл не найден %s', ex)
+
+
+def delete_file(condition, x=None):  # непонятна роль параметра x
+    file = 'punchline.txt'  # file -> file_name. Не забудь вынести в константы
+    obj = Path(file)  # obj — слишком общее название, я бы предпочёл использовать, например, file_path
+    with condition:
+        condition.wait(timeout=1)
+        try:
+            obj.unlink()
+            logger.info('Удалил файл')
+        except FileNotFoundError as ex:
+            logger.error(ex)  # при одинаковых событиях ты по-разному обрабатываешь исключения. Я бы вообще убрал
+            # отсюда обработку исключений и сделал бы её там, где ты вызываешь эти функции.
+
+
+class Job:
+    def __init__(
+            self,
+            func=None,
+            name=None,
+            args=None,
+    ):
+        self.args = args  # есть смысл использовать @dataclass, тогда не придётся писать этот шаблонный код
+        self.name = name
+        self.func = func
+        # Также по условиям задания настройки задачи должны включать длительность выполнения, время запуска,
+        # количество попыток. Не забудь, пожалуйста, добавить эти настройки.
+
+    def run(self, *args):
+        tar = self.func(*args)
+        logger.info('тип объекта в Job.run %s', type(tar))
+        logger.debug('запуск объекта %s', tar)  # логировать инфу о запуске лучше ДО того, как ты вызовешь
+                                                # функцию, а иначе такие логи окажутся для тебя бесполезны
+        return tar

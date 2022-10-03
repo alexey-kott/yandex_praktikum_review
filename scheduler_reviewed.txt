@@ -1,0 +1,99 @@
+# Привет! В общем что смог, то сделал. Остальное даже загуглить не могу.
+# По факту просто трачу время, сидя и пялясь в экран. На эту реализацию неделя потрачена))
+# Я просто не понимаю даже что гуглить, что бы сделать всё задание.
+# Не знаю, может после ревью я с мёртвой точки сдвинусь, поэтому отправляю пока так...
+
+# Прежде всего поменяй расширение файлов на *.py
+# Несмотря на то, что питоновский интерпретатор может запустить код из текстового
+# файла с любым расширением питоновский код всё же принято хранить в файлах с расширением *.py
+
+from job import Job, get_and_write_data, delete_file, copy_file
+from logger import logger
+import multiprocessing
+
+# У импортов сторонних модулей должен быть следующий порядок:
+# 1. модули из стандартной библиотеки
+# 2. модули, установленные из других источников (PyPI, например)
+# 3. локальные модули, импорт сущностей из файлов проекта
+
+# Подсказка: если не хочешь делать такие вещи вручную, то можешь воспользоваться автоматическими
+# форматерами кода: например, Black, или Autoformat file в PyCharm'e
+
+
+def coroutine(f):
+    def wrap(*args, **kwargs):
+        gen = f(*args, **kwargs)
+        gen.send(None)
+        return gen
+    return wrap
+
+
+class Scheduler(object):  # Тебе не нужно наследоваться от object: любой объект в питоне и так по умолчанию
+                          # является экземпляром object
+    def __init__(
+            self,
+            max_working_time=1,  # внутри функций лучше не хардкодить каких-либо значение. Определи константы-настройки
+                                 # в начале файла и используй их. Тем более, что таким образом ты сможешь избавиться от
+                                 # лишнего параметра
+            tries=0,
+            dependencies=(),  # нельзя в качестве аргумента по умолчанию указывать какой-либо мутабельный объект. Укажи
+                              # значение по умолчанию None, а потом если `dependencies is None` создавай пустой коллекцию
+            start_at=None,
+    ):  # будет классно если добавишь аргументам аннотации типов
+        super().__init__()  # не очень понятно для каких целей здесь этот вызов
+        self.task_list: list[Job] = []
+        self.start_at = start_at
+        self.max_working_time = max_working_time
+        self.tries = tries
+        self.dependencies = dependencies if dependencies is not None else None
+        # я бы рекомендовал тебе использовать dataclasses для этого класса: так ты смог бы избавиться от
+        # избыточного шаблонного кода, а если понадобиться что-то вычислить перед инициализацией, то можно сделать
+        # это в методе __post_init__()
+
+    @coroutine
+    def schedule(self):
+        # Насколько я понял, у тебя главный затык с понимание межтредового взаимодействия. В первую очередь тебе нужно
+        # ознакомиться с методами .acquire(), .wait(), .release() класса threading.Condition. Есть отличная статья
+        # с примерами такого взаимодействия. Изучи её, пожалуйста, и попробуй сделать по аналогии. Если после этого
+        # возникнут трудности — обращайся, обсудим. Статья: https://www.geeksforgeeks.org/inter-thread-communication-with-condition-method-in-python/
+        # Ну и про документацию не забывай: https://docs.python.org/3.6/library/asyncio-sync.html#condition
+        processes = []
+        while True:
+            task_list = (yield)
+            print(task_list)
+            for task in task_list:
+                logger.info(f'Планировщик: запускаю задачу - {task.name}')
+                p = multiprocessing.Process(target=task.run, args=(condition, url),)  # не очень понятно откуда здесь
+                                                                                      # появились переменные condition и url
+                p.start()
+                processes.append(p)
+            for process in processes:
+                logger.info(process)
+                process.join()
+                logger.info(f' process {process} stopped!')
+
+    def run(self, jobs: tuple):
+        gen = self.schedule()
+        gen.send(jobs)
+
+
+if __name__ == '__main__':
+    condition = multiprocessing.Condition()
+    url = 'https://official-joke-api.appspot.com/random_joke'  # константа, вынеси в начало
+    job1 = Job(
+        func=get_and_write_data,
+        name='Запрос в сеть',
+        args=(condition, url),
+    )
+    job2 = Job(
+        func=copy_file,
+        name='Удалить файл',
+        args=(condition, ),
+    )
+    job3 = Job(
+        func=delete_file,
+        name='Скопировать файл',
+        args=(condition,),
+    )
+    g = Scheduler()
+    g.run((job1, job2, job3))
